@@ -11,22 +11,50 @@ if(WIN32)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/windows")
 else()
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/linux")
-  # if you have libraw installed, it should be there
-  list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 endif()
 
 include(FetchContent)
 
 find_package(SDL3 QUIET)
+set(SDL3_TARGET SDL3::SDL3)
 if(NOT SDL3_FOUND)
-  message(STATUS "SDL3 not found. Building from source...")
+  message(STATUS "SDL3 not found locally. Fetching and building...")
+
   FetchContent_Declare(
         SDL3
         GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
         GIT_TAG        main
     )
   FetchContent_MakeAvailable(SDL3)
+  set(SDL3_TARGET SDL3::SDL3-static)
 endif()
+
+find_package(SDL3_image QUIET)
+set(SDL3_IMAGE_TARGET SDL3_image::SDL3_image)
+if(NOT SDL3_image_FOUND)
+  message(STATUS "SDL3_image not found locally. Fetching and building...")
+  FetchContent_Declare(
+        SDL3_image
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
+        GIT_TAG        main
+    )
+  FetchContent_MakeAvailable(SDL3_image)
+  set(SDL3_IMAGE_TARGET SDL3_image::SDL3_image-static)
+endif()
+
+find_package(SDL3_ttf QUIET)
+set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
+if(NOT SDL3_ttf_FOUND)
+  message(STATUS "SDL3_ttf not found locally. Fetching and building...")
+  FetchContent_Declare(
+        SDL3_image
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
+        GIT_TAG        main
+    )
+  FetchContent_MakeAvailable(SDL3_ttf)
+  set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf-static)
+endif()
+
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
@@ -45,41 +73,30 @@ if(NOT LIBRAW_FOUND)
 endif()
 
 if(NOT LIBRAW_FOUND)
-  message(STATUS "LibRaw not found locally via pkg-config or headers. Fetching from source...")
+  message(STATUS "LibRaw not found locally or standard paths")
   FetchContent_Declare(
-      LibRaw
-      GIT_REPOSITORY https://github.com/LibRaw/LibRaw.git
-      GIT_TAG        master
-  )
+        LibRaw
+        GIT_REPOSITORY https://github.com/LibRaw/LibRaw.git
+        GIT_TAG        master
+    )
   FetchContent_MakeAvailable(LibRaw)
-else()
-  message(STATUS "Found installed LibRaw: ${LIBRAW_LIBRARIES}")
 endif()
 
-file(GLOB SRCS "${CMAKE_HOME_DIRECTORY}/src/*.c")
+file(GLOB SRCS "src/*.c")
 add_executable(main ${SRCS})
 
-if(LIBRAW_INCLUDE_DIRS)
-  target_include_directories(main PRIVATE ${LIBRAW_INCLUDE_DIRS})
-endif()
-
-if(TARGET SDL3::SDL3-static)
-  set(SDL3_TARGET SDL3::SDL3-static)
-elseif(TARGET SDL3::SDL3)
-  set(SDL3_TARGET SDL3::SDL3)
-else()
-  set(SDL3_TARGET SDL3::SDL3_shared)
-endif()
-
+# Link Libraries
 target_link_libraries(main PRIVATE
     ${SDL3_TARGET}
+    ${SDL3_IMAGE_TARGET}
+    ${SDL3_TTF_TARGET}
     $<$<BOOL:${LIBRAW_FOUND}>:${LIBRAW_LIBRARIES}>
     $<$<TARGET_EXISTS:raw>:raw>
     $<$<TARGET_EXISTS:raw_r>:raw_r>
     m
-    ${CMAKE_THREAD_LIBS_INIT}
 )
 
+# Static linking options for MinGW
 if(MINGW)
-  target_link_options(main PRIVATE -static-libgcc -Wl,-Bstatic)
+  target_link_options(main PRIVATE -ltm -static-libgcc -Wl,-Bstatic)
 endif()
