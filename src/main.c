@@ -1,3 +1,4 @@
+#include <SDL3/SDL_keycode.h>
 #define SDL_MAIN_USE_CALLBACKS 1
 
 #include <SDL3/SDL.h>
@@ -46,13 +47,15 @@ typedef enum : char {
   RAWR_IMAGE_NOT_SUPPORTED,
   RAWR_LIBRAW_FAIL,
   RAWR_SDL_FAIL,
-} LoadStatus;
+  RAWR_NO_IMAGE,
+} RawrStatus;
 
 typedef enum : char {
   RAWR_THREAD_QUIT,
   RAWR_THREAD_GET_PHOTO_FROM_DROP,
   RAWR_THREAD_GET_NEXT_PHOTO,
   RAWR_THREAD_ENUM_DIR_FROM_DROP,
+  RAWR_THREAD_SAVE_CURRENT,
 } WakeUpPurpose;
 
 static struct {
@@ -71,7 +74,10 @@ static struct {
   int image_text_w, image_text_h;
 
   SDL_Texture *cur_image;
+  SDL_Surface *cur_image_surface;
+
   SDL_Texture *cur_thumbnail;
+  SDL_Surface *cur_thumbnail_surface;
 
   SDL_Surface *next_image;
   SDL_Surface *next_thumbnail;
@@ -99,8 +105,8 @@ static struct {
 
   _Atomic bool texture_swap_ready;
 
-  _Atomic bool load_image_failed;
-  LoadStatus load_status;
+  _Atomic bool task_failed;
+  RawrStatus task_status;
 
   WakeUpPurpose purpose;
 
@@ -162,8 +168,8 @@ bool handle_path(const char *data) {
     state.current_dir = SDL_strdup(data);
     state.purpose = RAWR_THREAD_ENUM_DIR_FROM_DROP;
   } else {
-    atomic_store_explicit(&state.load_image_failed, true, memory_order_release);
-    state.load_status = RAWR_IMAGE_NOT_SUPPORTED;
+    atomic_store_explicit(&state.task_failed, true, memory_order_release);
+    state.task_status = RAWR_IMAGE_NOT_SUPPORTED;
     return false;
   }
   return true;
@@ -240,6 +246,11 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
       buttons.change_offset_timer = 0.;
     } else if (event->key.key == SDLK_P) {
       state.show_thumbnail = !state.show_thumbnail;
+    } else if (event->key.key == SDLK_S && event->key.mod & SDL_KMOD_CTRL) {
+      SDL_LockMutex(state.mutex);
+      state.purpose = RAWR_THREAD_SAVE_CURRENT;
+      SDL_SignalCondition(state.cond);
+      SDL_UnlockMutex(state.mutex);
     }
     break;
   }
@@ -252,13 +263,16 @@ void swap_textures() {
   SDL_DestroyTexture(state.cur_thumbnail);
   SDL_DestroyTexture(state.cur_image);
 
+  SDL_DestroySurface(state.cur_image_surface);
+  SDL_DestroySurface(state.cur_thumbnail_surface);
+
   state.cur_thumbnail =
       SDL_CreateTextureFromSurface(state.renderer, state.next_thumbnail);
   state.cur_image =
       SDL_CreateTextureFromSurface(state.renderer, state.next_image);
 
-  SDL_DestroySurface(state.next_thumbnail);
-  SDL_DestroySurface(state.next_image);
+  state.cur_image_surface = state.next_image;
+  state.cur_thumbnail_surface = state.next_thumbnail;
 
   state.next_thumbnail = nullptr;
   state.next_image = nullptr;
@@ -266,7 +280,7 @@ void swap_textures() {
   atomic_store_explicit(&state.texture_swap_ready, false, memory_order_release);
 }
 
-LoadStatus try_sdl_image(const char *file_path) {
+RawrStatus try_sdl_image(const char *file_path) {
   state.next_image = IMG_Load(file_path);
   state.next_thumbnail = nullptr;
   if (!state.next_image) {
@@ -276,7 +290,7 @@ LoadStatus try_sdl_image(const char *file_path) {
   return RAWR_SUCCESS;
 }
 
-LoadStatus load_image(const char *file_path) {
+RawrStatus load_image(const char *file_path) {
   state.libraw_error_code = libraw_open_file(state.img, file_path);
   if (state.libraw_error_code == LIBRAW_FILE_UNSUPPORTED)
     return try_sdl_image(file_path);
@@ -372,6 +386,29 @@ const char *get_absolute_path(const char *file_dir, const char *filename,
   return result;
 }
 
+void handle_save() {
+  SDL_Log("Starting save...");
+  SDL_Surface *cur_surface = state.show_thumbnail && state.cur_thumbnail_surface
+                                 ? state.cur_thumbnail_surface
+                                 : state.cur_image_surface;
+  if (!cur_surface) {
+    state.task_status = RAWR_NO_IMAGE;
+    atomic_store_explicit(&state.task_failed, true, memory_order_release);
+    return;
+  }
+
+  const char *path =
+      get_absolute_path(state.current_dir, "output.jpg", state.file_sep);
+
+  if (!IMG_SaveJPG(cur_surface, path, 100)) {
+    state.task_status = RAWR_SDL_FAIL;
+    atomic_store_explicit(&state.task_failed, true, memory_order_release);
+    return;
+  }
+  SDL_free((void *)path);
+  SDL_Log("Saved!");
+}
+
 static const char *FILE_PATTERN = "*";
 int SDLCALL file_handler_func(void *) {
   SDL_LockMutex(state.mutex);
@@ -383,10 +420,10 @@ int SDLCALL file_handler_func(void *) {
       goto end;
 
     case RAWR_THREAD_GET_PHOTO_FROM_DROP:
-      state.load_status = load_image(state.dropped_path);
-      if (state.load_status != RAWR_SUCCESS) {
-        atomic_store_explicit(&state.load_image_failed, true,
-                              memory_order_release);
+      SDL_Log("Getting photo from drop...");
+      state.task_status = load_image(state.dropped_path);
+      if (state.task_status != RAWR_SUCCESS) {
+        atomic_store_explicit(&state.task_failed, true, memory_order_release);
       }
 
       const char *filename = nullptr;
@@ -410,6 +447,7 @@ int SDLCALL file_handler_func(void *) {
       break;
 
     case RAWR_THREAD_GET_NEXT_PHOTO:
+      SDL_Log("Getting next photo...");
       state.cur_filename_idx =
           (state.cur_filename_idx + state.next_photo_offset) %
           state.enumerated_files_length;
@@ -420,16 +458,16 @@ int SDLCALL file_handler_func(void *) {
           state.current_dir, state.enumerated_files[state.cur_filename_idx],
           state.file_sep);
 
-      state.load_status = load_image(abs_path);
-      if (state.load_status != RAWR_SUCCESS) {
-        atomic_store_explicit(&state.load_image_failed, true,
-                              memory_order_release);
+      state.task_status = load_image(abs_path);
+      if (state.task_status != RAWR_SUCCESS) {
+        atomic_store_explicit(&state.task_failed, true, memory_order_release);
       }
       SDL_free((void *)abs_path);
       state.next_photo_offset = 0;
       break;
 
     case RAWR_THREAD_ENUM_DIR_FROM_DROP:
+      SDL_Log("Opening dropped folder...");
       state.enumerated_files = SDL_GlobDirectory(
           state.current_dir, FILE_PATTERN, SDL_GLOB_CASEINSENSITIVE,
           &state.enumerated_files_length);
@@ -439,13 +477,16 @@ int SDLCALL file_handler_func(void *) {
             state.current_dir, state.enumerated_files[state.cur_filename_idx],
             state.file_sep);
         SDL_Log("Trying to load image with absolute path of: %s", abs_path);
-        state.load_status = load_image(abs_path);
-        if (state.load_status != RAWR_SUCCESS) {
-          atomic_store_explicit(&state.load_image_failed, true,
-                                memory_order_release);
+        state.task_status = load_image(abs_path);
+        if (state.task_status != RAWR_SUCCESS) {
+          atomic_store_explicit(&state.task_failed, true, memory_order_release);
         }
         SDL_free((void *)abs_path);
       }
+      break;
+
+    case RAWR_THREAD_SAVE_CURRENT:
+      handle_save();
       break;
     }
   }
@@ -472,8 +513,9 @@ void fill_dst_rect(float w, float h, SDL_FRect *rect_out,
   rect_out->y = (h - rect_out->h) / 2.0f;
 }
 
-char fmt_buffer[512];
-static const int buffer_size = 512;
+static constexpr int buffer_size = 512;
+char fmt_buffer[buffer_size];
+
 SDL_AppResult SDL_AppIterate(void *) {
   Uint64 now = SDL_GetPerformanceCounter();
   state.delta_time = (double)(now - state._last_perf_count) /
@@ -484,8 +526,8 @@ SDL_AppResult SDL_AppIterate(void *) {
     buttons.change_offset_timer -= state.delta_time;
   }
 
-  if (atomic_load_explicit(&state.load_image_failed, memory_order_acquire)) {
-    switch (state.load_status) {
+  if (atomic_load_explicit(&state.task_failed, memory_order_acquire)) {
+    switch (state.task_status) {
     case RAWR_SUCCESS:
       SDL_snprintf(
           fmt_buffer, buffer_size,
@@ -511,10 +553,13 @@ SDL_AppResult SDL_AppIterate(void *) {
                    (const char *)SDL_GetError());
       show_error_box("SDL error", fmt_buffer);
       break;
+
+    case RAWR_NO_IMAGE:
+      show_error_box("No image open!", "Open an image or something.");
+      break;
     }
 
-    atomic_store_explicit(&state.load_image_failed, false,
-                          memory_order_release);
+    atomic_store_explicit(&state.task_failed, false, memory_order_release);
   }
 
   if (atomic_load_explicit(&state.texture_swap_ready, memory_order_acquire)) {
