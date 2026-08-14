@@ -5,208 +5,226 @@ project(rawr C)
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_compile_options(-Wall)
-
-include(FetchContent)
+#add_compile_options(-Wall)
 
 if(WIN32)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY
-        "${CMAKE_BINARY_DIR}/windows"
-    )
+        "${CMAKE_BINARY_DIR}/windows")
 else()
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY
-        "${CMAKE_BINARY_DIR}/linux"
-    )
+        "${CMAKE_BINARY_DIR}/linux")
 endif()
 
-find_package(SDL3 QUIET)
+# ============================================================
+# Windows / MinGW
+# ============================================================
 
-if(SDL3_FOUND)
+if(MINGW)
 
-  message(STATUS "Using system SDL3")
-
-  set(SDL3_TARGET SDL3::SDL3)
-
-else()
-
-  message(STATUS "SDL3 not found locally. Fetching and building...")
-
-  set(SDL_SHARED ON CACHE BOOL "" FORCE)
-  set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-
-  FetchContent_Declare(
-        SDL3
-        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-        GIT_TAG main
-        GIT_SHALLOW FALSE
+  # Statically link the GCC runtimes into our executable.
+  add_link_options(
+        -static
+        -static-libgcc
+        -static-libstdc++
     )
-
-  FetchContent_MakeAvailable(SDL3)
-
-  set(SDL3_TARGET SDL3::SDL3)
 
 endif()
 
-find_package(SDL3_image QUIET)
+# ============================================================
+# SDL3
+# ============================================================
 
-if(SDL3_image_FOUND)
+if(MINGW)
 
-  message(STATUS "Using system SDL3_image")
+  message(STATUS "Building SDL3 STATIC")
 
-  set(SDL3_IMAGE_TARGET SDL3_image::SDL3_image)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 
-else()
+  set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+  set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 
-  message(STATUS
-        "SDL3_image not found locally. Fetching and building..."
+  add_subdirectory(
+        "${CMAKE_SOURCE_DIR}/third_party/SDL3"
+        "${CMAKE_BINARY_DIR}/sdl3-build"
     )
 
-  set(SDL3IMAGE_VENDORED ON CACHE BOOL "" FORCE)
-
-  FetchContent_Declare(
-        SDL3_image
-        GIT_REPOSITORY https://github.com/libsdl-org/SDL_image.git
-        GIT_TAG main
-        GIT_SHALLOW FALSE
-    )
-
-  FetchContent_MakeAvailable(SDL3_image)
-
-  set(SDL3_IMAGE_TARGET SDL3_image::SDL3_image)
-
-endif()
-
-find_package(SDL3_ttf QUIET)
-
-if(SDL3_ttf_FOUND)
-
-  message(STATUS "Using system SDL3_ttf")
-
-  set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
-
-else()
-
-  message(STATUS
-        "SDL3_ttf not found locally. Fetching and building..."
-    )
-
-  set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
-
-  FetchContent_Declare(
-        SDL3_ttf
-        GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
-        GIT_TAG main
-        GIT_SHALLOW FALSE
-    )
-
-  FetchContent_MakeAvailable(SDL3_ttf)
-
-  set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
-
-endif()
-
-set(LIBRAW_TARGET "")
-
-if(NOT MINGW)
-
-  find_package(PkgConfig QUIET)
-
-  if(PkgConfig_FOUND)
-
-    pkg_check_modules(
-            LIBRAW
-            QUIET
-            IMPORTED_TARGET
-            libraw
+  if(NOT TARGET SDL3::SDL3-static)
+    message(FATAL_ERROR
+            "SDL3::SDL3-static was not created"
         )
-
-    if(LIBRAW_FOUND)
-      message(STATUS "Using system LibRaw")
-      set(LIBRAW_TARGET PkgConfig::LIBRAW)
-    endif()
-
   endif()
+
+  if(NOT TARGET SDL3::SDL3)
+    add_library(
+            SDL3::SDL3
+            ALIAS
+            SDL3::SDL3-static
+        )
+  endif()
+
+  if(NOT TARGET SDL3::Headers)
+    message(FATAL_ERROR
+            "SDL3::Headers was not created"
+        )
+  endif()
+
+  set(SDL3_TARGET SDL3::SDL3-static)
+
+else()
+
+  find_package(SDL3 REQUIRED)
+
+  set(SDL3_TARGET SDL3::SDL3)
 
 endif()
 
+# ============================================================
+# SDL3_image
+# ============================================================
 
-if(NOT LIBRAW_TARGET)
+if(MINGW)
 
-  message(STATUS "Building LibRaw from source")
+  message(STATUS "Building SDL3_image STATIC")
 
-  FetchContent_Declare(
-        LibRawSource
-        GIT_REPOSITORY https://github.com/LibRaw/LibRaw.git
-        GIT_TAG master
-        GIT_SHALLOW FALSE
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_VENDORED ON CACHE BOOL "" FORCE)
+
+  set(SDLIMAGE_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_STATIC ON CACHE BOOL "" FORCE)
+
+  add_subdirectory(
+        "${CMAKE_SOURCE_DIR}/third_party/SDL3_image"
+        "${CMAKE_BINARY_DIR}/sdl3-image-build"
     )
 
-  FetchContent_GetProperties(LibRawSource)
-
-  if(NOT librawsource_POPULATED)
-
-    FetchContent_Populate(LibRawSource)
-
-  endif()
-
-  FetchContent_Declare(
-        LibRawCMake
-        GIT_REPOSITORY https://github.com/LibRaw/LibRaw-cmake.git
-        GIT_TAG master
-        GIT_SHALLOW FALSE
-    )
-
-  FetchContent_GetProperties(LibRawCMake)
-
-  if(NOT librawcmake_POPULATED)
-
-    FetchContent_Populate(LibRawCMake)
-
+  if(NOT TARGET SDL3_image::SDL3_image-static)
+    message(FATAL_ERROR
+            "SDL3_image::SDL3_image-static was not created"
+        )
   endif()
 
   set(
-        LIBRAW_PATH
-        "${librawsource_SOURCE_DIR}"
-        CACHE PATH
-        "Path to LibRaw source"
-        FORCE
+        SDL3_IMAGE_TARGET
+        SDL3_image::SDL3_image-static
     )
 
-  message(STATUS
-        "LibRaw source: ${LIBRAW_PATH}"
-    )
+else()
+  find_package(SDL3_image REQUIRED)
 
+  set(SDL3_IMAGE_TARGET SDL3_image::SDL3_image)
+
+endif()
+
+# ============================================================
+# SDL3_ttf
+# ============================================================
+
+if(MINGW)
+
+  message(STATUS "Building SDL3_ttf STATIC")
+
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
+  set(SDLTTF_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDLTTF_STATIC ON CACHE BOOL "" FORCE)
 
   add_subdirectory(
-        "${librawcmake_SOURCE_DIR}"
-        "${CMAKE_BINARY_DIR}/libraw-build"
+        "${CMAKE_SOURCE_DIR}/third_party/SDL3_ttf"
+        "${CMAKE_BINARY_DIR}/sdl3-ttf-build"
     )
 
-  if(TARGET libraw::libraw)
+  if(TARGET SDL3_ttf::SDL3_ttf-static)
 
     set(
-            LIBRAW_TARGET
-            libraw::libraw
+            SDL3_TTF_TARGET
+            SDL3_ttf::SDL3_ttf-static
         )
 
-  elseif(TARGET raw)
+  elseif(TARGET SDL3_ttf-static)
 
     set(
-            LIBRAW_TARGET
-            raw
+            SDL3_TTF_TARGET
+            SDL3_ttf-static
         )
 
   else()
 
     message(FATAL_ERROR
-            "LibRaw was configured but no LibRaw target was created."
+            "SDL3_ttf static target was not created"
         )
 
   endif()
 
+else()
+
+  find_package(SDL3_ttf REQUIRED)
+
+  set(SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
+
 endif()
 
-file(GLOB SRCS
+# ============================================================
+# LibRaw
+# ============================================================
+
+if(MINGW)
+
+  message(STATUS "Building LibRaw STATIC")
+
+  add_compile_definitions(
+        M_PI=3.14159265358979323846
+        M_SQRT1_2=0.70710678118654752440
+    )
+
+  set(
+        BUILD_SHARED_LIBS
+        OFF
+        CACHE BOOL "" FORCE
+    )
+
+  set(
+        ENABLE_OPENMP
+        OFF
+        CACHE BOOL "" FORCE
+    )
+
+  set(
+        LIBRAW_PATH
+        "${CMAKE_SOURCE_DIR}/third_party/LibRaw"
+        CACHE PATH "" FORCE
+    )
+
+  add_subdirectory(
+        "${CMAKE_SOURCE_DIR}/third_party/LibRaw-cmake"
+        "${CMAKE_BINARY_DIR}/libraw-build"
+    )
+
+  set(LIBRAW_TARGET libraw::libraw)
+
+else()
+
+  find_package(PkgConfig REQUIRED)
+
+  pkg_check_modules(
+        LIBRAW
+        REQUIRED
+        IMPORTED_TARGET
+        libraw
+    )
+
+  set(LIBRAW_TARGET PkgConfig::LIBRAW)
+
+endif()
+
+
+# ============================================================
+# Your source
+# ============================================================
+
+file(
+    GLOB SRCS
     CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.c"
 )
@@ -214,15 +232,9 @@ file(GLOB SRCS
 add_executable(main ${SRCS})
 
 
-if(NOT TARGET ${LIBRAW_TARGET})
-else()
-
-  target_include_directories(
-        main PRIVATE
-        "${LIBRAW_SOURCE_DIR}"
-    )
-
-endif()
+# ============================================================
+# Libraries
+# ============================================================
 
 target_link_libraries(
     main PRIVATE
@@ -233,31 +245,25 @@ target_link_libraries(
     ${LIBRAW_TARGET}
 )
 
+
+# ============================================================
+# Extra MinGW libraries
+# ============================================================
+
 if(MINGW)
 
   target_link_options(
         main PRIVATE
+        -static
         -static-libgcc
         -static-libstdc++
-  )
-
-endif()
-
-if(WIN32)
-
-  add_custom_command(
-        TARGET main
-        POST_BUILD
-
-        COMMAND
-            ${CMAKE_COMMAND}
-            -E copy_if_different
-
-            $<TARGET_RUNTIME_DLLS:main>
-
-            $<TARGET_FILE_DIR:main>
-
-        COMMAND_EXPAND_LISTS
     )
+
+  target_link_libraries(main PRIVATE
+        stdc++
+        gcc
+    )
+
+
 
 endif()

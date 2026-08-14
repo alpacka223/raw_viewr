@@ -4,3 +4,12 @@
 [submodule "third_party/LibRaw-cmake"]
 	path = third_party/LibRaw-cmake
 	url = https://github.com/LibRaw/LibRaw-cmake.git
+[submodule "third_party/SDL3_image"]
+	path = third_party/SDL3_image
+	url = https://github.com/libsdl-org/SDL_image.git
+[submodule "third_party/SDL3"]
+	path = third_party/SDL3
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "third_party/SDL3_ttf"]
+	path = third_party/SDL3_ttf
+	url = https://github.com/libsdl-org/SDL_ttf.git
