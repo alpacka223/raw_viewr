@@ -36,3 +36,12 @@ Then run:
 cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=mingw-toolchain.cmake
 cmake --build build-win -j$(nproc)
 ```
+
+## Usage
+
+You can drag and drop files and folders to open them.
+
+Keybinds:
+Left arrow/Right arrow - choose previous/next file.
+P - switch to a preview of raw file.
+CTRL + S - save current view as output.jpg
