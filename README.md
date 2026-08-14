@@ -40,6 +40,7 @@ cmake --build build-win -j$(nproc)
 ## Usage
 
 You can drag and drop files and folders to open them.
+You can also use os' Open with... functionality.
 
 Keybinds:
 Left arrow/Right arrow - choose previous/next file.
